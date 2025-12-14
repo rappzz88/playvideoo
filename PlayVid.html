@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>2AK PlayVid</title>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: Arial, sans-serif; }
+    body { background: #000; color: white; }
+    .container { max-width: 500px; margin: 40px auto; padding: 20px; }
+    input, button { width: 100%; padding: 12px; margin: 10px 0; border-radius: 8px; border: none; }
+    button { background: #fe2c55; color: white; font-weight: bold; cursor: pointer; }
+    #loginPage, #mainPage { display: none; }
+    .post { background: #222; margin: 15px 0; padding: 15px; border-radius: 10px; }
+    video, img { width: 100%; border-radius: 10px; margin: 10px 0; }
+    .profile-pic { width: 80px; height: 80px; border-radius: 50%; object-fit: cover; }
+  </style>
+</head>
+<body>
+
+<div class="container" id="loginPage">
+  <h1>2AK PlayVid</h1>
+  <p>Hanya untuk kelas 2 AL Khawarizmi</p>
+  <input type="text" id="fullName" placeholder="Nama Penuh (Contoh: Mohamad Rafiuddin)" />
+  <input type="text" id="username" placeholder="Username (bebas)" />
+  <input type="password" id="password" placeholder="Password" />
+  <button onclick="handleLogin()">Login / Daftar</button>
+</div>
+
+<div class="container" id="mainPage">
+  <h2>Selamat Datang, <span id="displayName"></span>!</h2>
+  <div>
+    <img id="profileImg" class="profile-pic" src="https://via.placeholder.com/80" />
+    <button onclick="changeProfilePic()">Ganti Foto Profil</button>
+  </div>
+
+  <h3>Upload Video/Gambar</h3>
+  <input type="file" id="mediaFile" accept="image/*,video/*" />
+  <button onclick="uploadMedia()">Upload</button>
+
+  <div id="feed"></div>
+</div>
+
+<!-- Firebase SDK -->
+<script>
+  // 🔥 Firebase Config
+  const firebaseConfig = {
+    apiKey: "AIzaSyBJW_BwyZzxqumyDsyACddWZMUKJv1O9as",
+    authDomain: "ak-playvideo.firebaseapp.com",
+    projectId: "ak-playvideo",
+    storageBucket: "ak-playvideo.firebasestorage.app",
+    messagingSenderId: "452155991718",
+    appId: "1:452155991718:web:5d534214ad9526fc61f667",
+    measurementId: "G-9EHXX4JKK2"
+  };
+
+  // Initialize Firebase
+  firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth();
+  const db = firebase.firestore();
+  const storage = firebase.storage();
+
+  // Daftar Nama Sah Kelas
+  const registeredNames = [
+    "Mohamad Rafiuddin", "Mohamad Zaqwan", "Mohamad eirfan", "Haziq Iqbal",
+    "Aizam putera", "Waliuddin", "Sharif Aiman", "Mohamad Farhan",
+    "Farisha Amira", "Liana", "Aqilah", "Darwina", "Qasrijah", "Alaisha",
+    "Yunice", "Nurifa", "Ghazwani", "Mia Maisara", "Aliya", "Ramadhania",
+    "Shaneeza", "Shafira", "Fateha", "Amisah", "Halimatul", "Dayang", "Ainul"
+  ];
+
+  // Normalisasi nama (hapus spasi berlebihan, lowercase untuk matching)
+  function normalize(name) {
+    return name.trim().toLowerCase().replace(/\s+/g, ' ');
+  }
+
+  const normalizedRegistered = registeredNames.map(normalize);
+
+  // Cek apakah nama valid
+  function isValidName(fullName) {
+    const norm = normalize(fullName);
+    return normalizedRegistered.some(n => norm.includes(n) || n.includes(norm));
+  }
+
+  // Login / Daftar
+  async function handleLogin() {
+    const fullName = document.getElementById("fullName").value;
+    const username = document.getElementById("username").value;
+    const password = document.getElementById("password").value;
+
+    if (!fullName || !username || !password) {
+      alert("Sila isikan semua medan.");
+      return;
+    }
+
+    if (!isValidName(fullName)) {
+      alert("Nama tidak sah! Ini hanya untuk kelas 2 AL Khawarizmi.");
+      return;
+    }
+
+    // Gunakan email palsu berdasarkan nama untuk Firebase Auth
+    const email = `${username}@2ak.playvid`;
+
+    try {
+      // Coba login dulu
+      await auth.signInWithEmailAndPassword(email, password);
+      // Jika berjaya, redirect ke main
+      showMainPage(fullName, username);
+    } catch (error) {
+      if (error.code === "auth/user-not-found") {
+        // Daftar pengguna baru
+        try {
+          const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+          // Simpan info pengguna di Firestore
+          await db.collection("users").doc(userCredential.user.uid).set({
+            fullName: fullName,
+            username: username,
+            profilePic: "https://via.placeholder.com/80"
+          });
+          showMainPage(fullName, username);
+        } catch (regError) {
+          alert("Ralat pendaftaran: " + regError.message);
+        }
+      } else if (error.code === "auth/wrong-password") {
+        // Nama dah ada → minta password lama
+        alert(`Nama sudah digunakan! Sila masukkan password yang betul untuk ${fullName}.`);
+      } else {
+        alert("Ralat: " + error.message);
+      }
+    }
+  }
+
+  // Tampilkan halaman utama
+  function showMainPage(fullName, username) {
+    document.getElementById("displayName").textContent = fullName;
+    document.getElementById("loginPage").style.display = "none";
+    document.getElementById("mainPage").style.display = "block";
+    loadFeed();
+  }
+
+  // Ganti foto profil
+  async function changeProfilePic() {
+    const file = prompt("URL gambar baru? (atau upload nanti)"); // Untuk demo, guna URL
+    if (!file) return;
+
+    const user = auth.currentUser;
+    if (!user) return;
+
+    try {
+      await db.collection("users").doc(user.uid).update({ profilePic: file });
+      document.getElementById("profileImg").src = file;
+      alert("Foto profil dikemas kini!");
+    } catch (e) {
+      alert("Gagal tukar foto: " + e.message);
+    }
+  }
+
+  // Upload media
+  async function uploadMedia() {
+    const fileInput = document.getElementById("mediaFile");
+    const file = fileInput.files[0];
+    if (!file) return alert("Pilih fail dulu!");
+
+    const user = auth.currentUser;
+    if (!user) return;
+
+    const userDoc = await db.collection("users").doc(user.uid).get();
+    const userData = userDoc.data();
+
+    const storageRef = storage.ref();
+    const fileRef = storageRef.child(`posts/${user.uid}_${Date.now()}_${file.name}`);
+    
+    try {
+      await fileRef.put(file);
+      const url = await fileRef.getDownloadURL();
+
+      // Simpan ke feed
+      await db.collection("posts").add({
+        userId: user.uid,
+        fullName: userData.fullName,
+        mediaUrl: url,
+        likes: [],
+        comments: [],
+        timestamp: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      alert("Upload berjaya!");
+      loadFeed();
+    } catch (e) {
+      alert("Gagal upload: " + e.message);
+    }
+  }
+
+  // Muat feed
+  async function loadFeed() {
+    const feedDiv = document.getElementById("feed");
+    feedDiv.innerHTML = "<h3>Feed</h3>";
+
+    const snapshot = await db.collection("posts").orderBy("timestamp", "desc").get();
+    snapshot.forEach(doc => {
+      const post = doc.data();
+      const isImage = post.mediaUrl.includes("image");
+      
+      const postEl = document.createElement("div");
+      postEl.className = "post";
+      postEl.innerHTML = `
+        <p><strong>${post.fullName}</strong></p>
+        ${isImage ? `<img src="${post.mediaUrl}" />` : `<video controls src="${post.mediaUrl}"></video>`}
+        <p>Likes: ${post.likes.length} | Comments: ${post.comments.length}</p>
+        <button onclick="likePost('${doc.id}')">Like</button>
+        <input type="text" placeholder="Komen..." id="comment-${doc.id}" />
+        <button onclick="commentPost('${doc.id}')">Komen</button>
+      `;
+      feedDiv.appendChild(postEl);
+    });
+  }
+
+  // Like post
+  async function likePost(postId) {
+    const user = auth.currentUser;
+    if (!user) return;
+    
+    const postRef = db.collection("posts").doc(postId);
+    const post = await postRef.get();
+    const data = post.data();
+    
+    if (data.likes.includes(user.uid)) {
+      // Unlike
+      await postRef.update({ likes: firebase.firestore.FieldValue.arrayRemove(user.uid) });
+    } else {
+      // Like
+      await postRef.update({ likes: firebase.firestore.FieldValue.arrayUnion(user.uid) });
+    }
+    loadFeed();
+  }
+
+  // Komen
+  async function commentPost(postId) {
+    const user = auth.currentUser;
+    if (!user) return;
+    
+    const comment = document.getElementById(`comment-${postId}`).value;
+    if (!comment) return;
+
+    await db.collection("posts").doc(postId).update({
+      comments: firebase.firestore.FieldValue.arrayUnion({
+        userId: user.uid,
+        text: comment,
+        time: firebase.firestore.FieldValue.serverTimestamp()
+      })
+    });
+    loadFeed();
+  }
+
+  // Cek sesi login
+  auth.onAuthStateChanged(async (user) => {
+    if (user) {
+      const userDoc = await db.collection("users").doc(user.uid).get();
+      if (userDoc.exists) {
+        const data = userDoc.data();
+        showMainPage(data.fullName, data.username);
+        document.getElementById("profileImg").src = data.profilePic;
+      }
+    } else {
+      document.getElementById("loginPage").style.display = "block";
+    }
+  });
+</script>
+
+</body>
+</html>
